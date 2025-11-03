@@ -150,6 +150,16 @@ public:
         report_test("Column extraction", c.rows() == 2 && c.cols() == 1 && c(1, 0) == 5);
     }
 
+    void test_sub_matrix_extraction() {
+        std::vector<double> data = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+        Matrix m(3, 3, data);
+
+        Matrix m1 = m.sub_matrix(1, 2, 1, 2);
+        Matrix m1_real(2, 2, { 5, 6, 8, 9});
+        //Matrix m1_real(3, 2, { 1, 2, 4, 5, 8, 9 });
+        report_test("Submatrix extraction", m1.rows() == m1_real.rows() && m1.cols() == m1_real.cols());
+    }
+
     void test_statistical_ops() {
         std::vector<double> data = { 1, 2, 3, 4, 5, 6 };
         Matrix m(2, 3, data);
@@ -224,8 +234,8 @@ public:
     }
 
     void test_checks() {
-        Matrix m1(2, 2, 0.0, 1, true);
-        Matrix m2(3, 3, 0.0, 1, true);
+        Matrix m1(2, 2, 0.0);
+        Matrix m2(3, 3, 0.0);
 
         bool caught_dimension_error = false;
         try {
@@ -258,15 +268,19 @@ public:
 
         // Test different operations
         auto test_operation = [&](const std::string& op_name, auto&& operation) {
-            Matrix m1_single(size, size, data1, 1);
-            Matrix m2_single(size, size, data2, 1);
+
+            MATRIX_CONFIGS::ENABLE_MULTITHREADING = false;
+            Matrix m1_single(size, size, data1);
+            Matrix m2_single(size, size, data2);
             double time_single = measure_time([&]() { operation(m1_single, m2_single); });
 
-            size_t num_threads = std::thread::hardware_concurrency();
-            Matrix m1_multi(size, size, data1, num_threads);
-            Matrix m2_multi(size, size, data2, num_threads);
+            MATRIX_CONFIGS::ENABLE_MULTITHREADING = true;
+            size_t num_threads = MATRIX_CONFIGS::NUM_THREADS;
+            Matrix m1_multi(size, size);
+            Matrix m2_multi(size, size);
             double time_multi = measure_time([&]() { operation(m1_multi, m2_multi); });
 
+            MATRIX_CONFIGS::ENABLE_MULTITHREADING = false;
             double speedup = time_single / time_multi;
             std::cout << std::fixed << std::setprecision(2);
             std::cout << op_name << ":\n";
@@ -284,6 +298,8 @@ public:
     }
 
     void run_all_tests() {
+        MATRIX_CONFIGS::ENABLE_CHECKS = true;
+        MATRIX_CONFIGS::NUM_THREADS = 4;
         std::cout << "=== Running Matrix Class Tests ===" << std::endl;
 
         test_constructor();
@@ -295,6 +311,7 @@ public:
         test_transpose();
         test_trace();
         test_row_col_extraction();
+        test_sub_matrix_extraction();
         test_statistical_ops();
         test_math_functions();
         test_utility_functions();
@@ -309,6 +326,9 @@ public:
         if (failed_tests == 0) {
             std::cout << "\nAll tests passed!" << std::endl;
         }
+
+        MATRIX_CONFIGS::ENABLE_CHECKS = false;
+        MATRIX_CONFIGS::NUM_THREADS = 1;
     }
 };
 

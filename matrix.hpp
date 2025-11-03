@@ -10,16 +10,20 @@
 #include <numeric>
 #include <limits>
 
-static size_t MULTITHREADING_THRESHOLD = 500;  // Use multithreading (even if enabled) only if range is greater or equal to this
+namespace MATRIX_CONFIGS {
+    static bool ENABLE_CHECKS = false;
+    static bool ENABLE_MULTITHREADING = false;
+    static size_t MULTITHREADING_THRESHOLD = 500;  // Use multithreading (even if enabled) only if range is greater or equal to this
+    static size_t NUM_THREADS = 1;
+}
+
+using namespace MATRIX_CONFIGS;
 
 class Matrix {
 private:
     std::vector<double> data_;
     size_t rows_;
     size_t cols_;
-    size_t num_threads_;
-    bool enable_checks_;
-    bool use_multithreading_;
 
     // Private helper methods
     void validate_dimensions(const Matrix& other) const;
@@ -31,8 +35,8 @@ private:
 
 public:
     // Constructors
-    Matrix(size_t rows, size_t cols, double init_val = 0.0, size_t num_threads = 1, bool enable_checks = false);
-    Matrix(size_t rows, size_t cols, const std::vector<double>& values, size_t num_threads = 1, bool enable_checks = false);
+    Matrix(size_t rows, size_t cols, double init_val = 0.0);
+    Matrix(size_t rows, size_t cols, const std::vector<double>& values);
 
     // Accessors
     double& operator()(size_t row, size_t col);
@@ -42,7 +46,7 @@ public:
     size_t size() const;
     void set_num_threads(size_t n);
     void set_enable_checks(bool enable);
-    void set_use_multithreading(bool enable);
+    void set_enable_multithreading(bool enable);
     void set_multithreading_threshold(size_t n);
 
     // Element-wise operations
@@ -66,9 +70,12 @@ public:
 
     // Matrix operations
     Matrix transpose() const;
+    Matrix transpose_parallel_blocked() const;
     double trace() const;
     Matrix row(size_t idx) const;
     Matrix col(size_t idx) const;
+    Matrix sub_matrix(size_t idx1, size_t idx2, size_t idy1, size_t idy2);
+    Matrix sub_matrix(size_t idx2, size_t idy2);
 
     // Statistical operations
     double min() const;
@@ -99,19 +106,19 @@ public:
 
 // Private helper methods
 inline void Matrix::validate_dimensions(const Matrix& other) const {
-    if (enable_checks_ && (rows_ != other.rows_ || cols_ != other.cols_)) {
+    if (ENABLE_CHECKS && (rows_ != other.rows_ || cols_ != other.cols_)) {
         throw std::invalid_argument("Matrix dimensions must match");
     }
 }
 
 inline void Matrix::validate_multiplication(const Matrix& other) const {
-    if (enable_checks_ && cols_ != other.rows_) {
+    if (ENABLE_CHECKS && cols_ != other.rows_) {
         throw std::invalid_argument("Invalid dimensions for multiplication");
     }
 }
 
 inline void Matrix::check_nan_inf() const {
-    if (!enable_checks_) return;
+    if (!ENABLE_CHECKS) return;
     for (const auto& val : data_) {
         if (std::isnan(val) || std::isinf(val)) {
             throw std::runtime_error("Matrix contains NaN or Inf values");
@@ -122,15 +129,15 @@ inline void Matrix::check_nan_inf() const {
 template<typename Func>
 inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
     // If multithreading is disabled or range is too small, execute serially
-    if (!use_multithreading_ || num_threads_ <= 1 || (end - start) <= MULTITHREADING_THRESHOLD) {
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1 || (end - start) <= MULTITHREADING_THRESHOLD) {
         func(start, end);
         return;
     }
 
-    size_t chunk_size = (end - start + num_threads_ - 1) / num_threads_;
+    size_t chunk_size = (end - start + NUM_THREADS - 1) / NUM_THREADS;
     std::vector<std::future<void>> futures;
 
-    for (size_t i = 0; i < num_threads_; ++i) {
+    for (size_t i = 0; i < NUM_THREADS; ++i) {
         size_t chunk_start = start + i * chunk_size;
         size_t chunk_end = std::min(chunk_start + chunk_size, end);
         if (chunk_start >= end) break;
@@ -144,18 +151,12 @@ inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
 }
 
 // Constructors
-inline Matrix::Matrix(size_t rows, size_t cols, double init_val, size_t num_threads, bool enable_checks)
-    : data_(rows* cols, init_val), rows_(rows), cols_(cols),
-    num_threads_(num_threads), enable_checks_(enable_checks),
-    use_multithreading_(num_threads > 1) {
-    
-}
+inline Matrix::Matrix(size_t rows, size_t cols, double init_val)
+    : data_(rows* cols, init_val), rows_(rows), cols_(cols) {  }
 
-inline Matrix::Matrix(size_t rows, size_t cols, const std::vector<double>& values, size_t num_threads, bool enable_checks)
-    : data_(values), rows_(rows), cols_(cols),
-    num_threads_(num_threads), enable_checks_(enable_checks),
-    use_multithreading_(num_threads > 1) {
-    if (enable_checks_ && data_.size() != rows_ * cols_) {
+inline Matrix::Matrix(size_t rows, size_t cols, const std::vector<double>& values)
+    : data_(values), rows_(rows), cols_(cols) {
+    if (ENABLE_CHECKS && data_.size() != rows_ * cols_) {
         throw std::invalid_argument("Vector size must match matrix dimensions");
     }
 }
@@ -173,17 +174,17 @@ inline size_t Matrix::rows() const { return rows_; }
 inline size_t Matrix::cols() const { return cols_; }
 inline size_t Matrix::size() const { return data_.size(); }
 inline void Matrix::set_num_threads(size_t n) {
-    num_threads_ = n;
-    use_multithreading_ = (n > 1);
+    NUM_THREADS = n;
+    ENABLE_MULTITHREADING = (n > 1);
 }
-inline void Matrix::set_enable_checks(bool enable) { enable_checks_ = enable; }
-inline void Matrix::set_use_multithreading(bool enable) { use_multithreading_ = enable; }
+inline void Matrix::set_enable_checks(bool enable) { ENABLE_CHECKS = enable; }
+inline void Matrix::set_enable_multithreading(bool enable) { ENABLE_MULTITHREADING = enable; }
 inline void Matrix::set_multithreading_threshold(size_t n) { MULTITHREADING_THRESHOLD = n; }
 
 // Element-wise operations
 inline Matrix Matrix::operator+(const Matrix& other) const {
     validate_dimensions(other);
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -196,7 +197,7 @@ inline Matrix Matrix::operator+(const Matrix& other) const {
 
 inline Matrix Matrix::operator-(const Matrix& other) const {
     validate_dimensions(other);
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -209,7 +210,7 @@ inline Matrix Matrix::operator-(const Matrix& other) const {
 
 inline Matrix Matrix::operator*(const Matrix& other) const {
     validate_multiplication(other);
-    Matrix result(rows_, other.cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, other.cols_, 0.0);
 
     parallel_for(0, rows_, [&](size_t start_row, size_t end_row) {
         for (size_t i = start_row; i < end_row; ++i) {
@@ -228,7 +229,7 @@ inline Matrix Matrix::operator*(const Matrix& other) const {
 
 inline Matrix Matrix::element_wise_multiply(const Matrix& other) const {
     validate_dimensions(other);
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -241,11 +242,11 @@ inline Matrix Matrix::element_wise_multiply(const Matrix& other) const {
 
 inline Matrix Matrix::element_wise_divide(const Matrix& other) const {
     validate_dimensions(other);
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
-            if (enable_checks_ && other.data_[i] == 0.0) {
+            if (ENABLE_CHECKS && other.data_[i] == 0.0) {
                 throw std::runtime_error("Division by zero");
             }
             result.data_[i] = data_[i] / other.data_[i];
@@ -257,7 +258,7 @@ inline Matrix Matrix::element_wise_divide(const Matrix& other) const {
 
 // Scalar operations
 inline Matrix Matrix::operator+(double scalar) const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -269,7 +270,7 @@ inline Matrix Matrix::operator+(double scalar) const {
 }
 
 inline Matrix Matrix::operator-(double scalar) const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -281,7 +282,7 @@ inline Matrix Matrix::operator-(double scalar) const {
 }
 
 inline Matrix Matrix::operator*(double scalar) const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -293,10 +294,10 @@ inline Matrix Matrix::operator*(double scalar) const {
 }
 
 inline Matrix Matrix::operator/(double scalar) const {
-    if (enable_checks_ && scalar == 0.0) {
+    if (ENABLE_CHECKS && scalar == 0.0) {
         throw std::runtime_error("Division by zero");
     }
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -338,7 +339,7 @@ inline Matrix& Matrix::operator*=(double scalar) {
 }
 
 inline Matrix& Matrix::operator/=(double scalar) {
-    if (enable_checks_ && scalar == 0.0) {
+    if (ENABLE_CHECKS && scalar == 0.0) {
         throw std::runtime_error("Division by zero");
     }
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
@@ -351,21 +352,61 @@ inline Matrix& Matrix::operator/=(double scalar) {
 
 // Matrix operations
 inline Matrix Matrix::transpose() const {
-    Matrix result(cols_, rows_, 0.0, num_threads_, enable_checks_);
+    if (ENABLE_MULTITHREADING) {
+        return transpose_parallel_blocked();
+    }
+    Matrix result(cols_, rows_, 0.0);
+    for (size_t i = 0; i < rows_; ++i) {
+        for (size_t j = 0; j < cols_; ++j) {
+            result(j, i) = (*this)(i, j);
+        }
+    }
+    return result;
+}
 
-    parallel_for(0, rows_, [&](size_t start_row, size_t end_row) {
-        for (size_t i = start_row; i < end_row; ++i) {
-            for (size_t j = 0; j < cols_; ++j) {
+inline Matrix Matrix::transpose_parallel_blocked() const {
+    Matrix result(cols_, rows_, 0.0);
+
+    size_t mid_row = rows_ / 2;
+    size_t mid_col = cols_ / 2;
+
+    auto transpose_block = [&](size_t r_start, size_t r_end, size_t c_start, size_t c_end) {
+        if (r_start >= r_end || c_start >= c_end) return;
+        for (size_t i = r_start; i < r_end; ++i) {
+            for (size_t j = c_start; j < c_end; ++j) {
                 result(j, i) = (*this)(i, j);
             }
         }
-        });
+        };
+
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1) {
+        // Serial version
+        transpose_block(0, mid_row, 0, mid_col);          // A11
+        transpose_block(0, mid_row, mid_col, cols_);      // A12
+        transpose_block(mid_row, rows_, 0, mid_col);      // A21
+        transpose_block(mid_row, rows_, mid_col, cols_);  // A22
+    }
+    else {
+        // Parallelized version using parallel_for()
+        parallel_for(0, 4, [&](size_t start, size_t end) {
+            for (size_t block = start; block < end; ++block) {
+                switch (block) {
+                case 0: transpose_block(0, mid_row, 0, mid_col); break;          // A11
+                case 1: transpose_block(0, mid_row, mid_col, cols_); break;      // A12
+                case 2: transpose_block(mid_row, rows_, 0, mid_col); break;      // A21
+                case 3: transpose_block(mid_row, rows_, mid_col, cols_); break;  // A22
+                default: break;
+                }
+            }
+            });
+    }
 
     return result;
 }
 
+
 inline double Matrix::trace() const {
-    if (enable_checks_ && rows_ != cols_) {
+    if (ENABLE_CHECKS && rows_ != cols_) {
         throw std::invalid_argument("Trace requires square matrix");
     }
 
@@ -377,34 +418,57 @@ inline double Matrix::trace() const {
 }
 
 inline Matrix Matrix::row(size_t idx) const {
-    if (enable_checks_ && idx >= rows_) {
+    if (ENABLE_CHECKS && idx >= rows_) {
         throw std::out_of_range("Row index out of range");
     }
     std::vector<double> row_data(data_.begin() + idx * cols_, data_.begin() + (idx + 1) * cols_);
-    return Matrix(1, cols_, row_data, num_threads_, enable_checks_);
+    return Matrix(1, cols_, row_data);
 }
 
 inline Matrix Matrix::col(size_t idx) const {
-    if (enable_checks_ && idx >= cols_) {
+    if (ENABLE_CHECKS && idx >= cols_) {
         throw std::out_of_range("Column index out of range");
     }
     std::vector<double> col_data(rows_);
     for (size_t i = 0; i < rows_; ++i) {
         col_data[i] = (*this)(i, idx);
     }
-    return Matrix(rows_, 1, col_data, num_threads_, enable_checks_);
+    return Matrix(rows_, 1, col_data);
+}
+
+inline Matrix Matrix::sub_matrix(size_t idx1, size_t idx2, size_t idy1, size_t idy2)
+{
+    if (ENABLE_CHECKS) {
+        if(idx1 < 0 || idx1 >= rows_ || idx2 < 0 || idx2 >= rows_)
+            throw std::out_of_range("Row indices out of range");
+        if (idy1 < 0 || idy1 >= cols_ || idy2 < 0 || idy2 >= cols_)
+            throw std::out_of_range("Column indices out of range");
+    }
+
+    Matrix result(idx2 - idx1 + 1, idy2 - idy1 + 1);
+    for (size_t i = idx1; i <= idx2; ++i) {
+        for (size_t j = idy1; j <= idy2; ++j) {
+            result(i - idx1, j - idy1) = (*this)(i, j);
+        }
+    }
+    return result;
+}
+
+inline Matrix Matrix::sub_matrix(size_t idx2, size_t idy2)
+{
+    return sub_matrix(0, idx2, 0, idy2);
 }
 
 // Statistical operations
 inline double Matrix::min() const {
-    if (!use_multithreading_ || num_threads_ <= 1) {
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1) {
         return *std::min_element(data_.begin(), data_.end());
     }
 
-    size_t chunk_size = (data_.size() + num_threads_ - 1) / num_threads_;
+    size_t chunk_size = (data_.size() + NUM_THREADS - 1) / NUM_THREADS;
     std::vector<std::future<double>> futures;
 
-    for (size_t i = 0; i < num_threads_; ++i) {
+    for (size_t i = 0; i < NUM_THREADS; ++i) {
         size_t start = i * chunk_size;
         size_t end = std::min(start + chunk_size, data_.size());
         if (start >= data_.size()) break;
@@ -422,14 +486,14 @@ inline double Matrix::min() const {
 }
 
 inline double Matrix::max() const {
-    if (!use_multithreading_ || num_threads_ <= 1) {
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1) {
         return *std::max_element(data_.begin(), data_.end());
     }
 
-    size_t chunk_size = (data_.size() + num_threads_ - 1) / num_threads_;
+    size_t chunk_size = (data_.size() + NUM_THREADS - 1) / NUM_THREADS;
     std::vector<std::future<double>> futures;
 
-    for (size_t i = 0; i < num_threads_; ++i) {
+    for (size_t i = 0; i < NUM_THREADS; ++i) {
         size_t start = i * chunk_size;
         size_t end = std::min(start + chunk_size, data_.size());
         if (start >= data_.size()) break;
@@ -447,14 +511,14 @@ inline double Matrix::max() const {
 }
 
 inline double Matrix::sum() const {
-    if (!use_multithreading_ || num_threads_ <= 1) {
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1) {
         return std::accumulate(data_.begin(), data_.end(), 0.0);
     }
 
-    size_t chunk_size = (data_.size() + num_threads_ - 1) / num_threads_;
+    size_t chunk_size = (data_.size() + NUM_THREADS - 1) / NUM_THREADS;
     std::vector<std::future<double>> futures;
 
-    for (size_t i = 0; i < num_threads_; ++i) {
+    for (size_t i = 0; i < NUM_THREADS; ++i) {
         size_t start = i * chunk_size;
         size_t end = std::min(start + chunk_size, data_.size());
         if (start >= data_.size()) break;
@@ -479,17 +543,17 @@ inline double Matrix::variance() const {
     double m = mean();
     double var_sum = 0.0;
 
-    if (!use_multithreading_ || num_threads_ <= 1) {
+    if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1) {
         for (const auto& val : data_) {
             double diff = val - m;
             var_sum += diff * diff;
         }
     }
     else {
-        size_t chunk_size = (data_.size() + num_threads_ - 1) / num_threads_;
+        size_t chunk_size = (data_.size() + NUM_THREADS - 1) / NUM_THREADS;
         std::vector<std::future<double>> futures;
 
-        for (size_t i = 0; i < num_threads_; ++i) {
+        for (size_t i = 0; i < NUM_THREADS; ++i) {
             size_t start = i * chunk_size;
             size_t end = std::min(start + chunk_size, data_.size());
             if (start >= data_.size()) break;
@@ -518,7 +582,7 @@ inline double Matrix::std_dev() const {
 
 // Element-wise math functions
 inline Matrix Matrix::sqrt() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -526,12 +590,12 @@ inline Matrix Matrix::sqrt() const {
         }
         });
 
-    if (enable_checks_) result.check_nan_inf();
+    if (ENABLE_CHECKS) result.check_nan_inf();
     return result;
 }
 
 inline Matrix Matrix::exp() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -539,12 +603,12 @@ inline Matrix Matrix::exp() const {
         }
         });
 
-    if (enable_checks_) result.check_nan_inf();
+    if (ENABLE_CHECKS) result.check_nan_inf();
     return result;
 }
 
 inline Matrix Matrix::log() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -552,12 +616,12 @@ inline Matrix Matrix::log() const {
         }
         });
 
-    if (enable_checks_) result.check_nan_inf();
+    if (ENABLE_CHECKS) result.check_nan_inf();
     return result;
 }
 
 inline Matrix Matrix::pow(double exponent) const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -565,12 +629,12 @@ inline Matrix Matrix::pow(double exponent) const {
         }
         });
 
-    if (enable_checks_) result.check_nan_inf();
+    if (ENABLE_CHECKS) result.check_nan_inf();
     return result;
 }
 
 inline Matrix Matrix::abs() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -582,7 +646,7 @@ inline Matrix Matrix::abs() const {
 }
 
 inline Matrix Matrix::sin() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -594,7 +658,7 @@ inline Matrix Matrix::sin() const {
 }
 
 inline Matrix Matrix::cos() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -606,7 +670,7 @@ inline Matrix Matrix::cos() const {
 }
 
 inline Matrix Matrix::tan() const {
-    Matrix result(rows_, cols_, 0.0, num_threads_, enable_checks_);
+    Matrix result(rows_, cols_, 0.0);
 
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         for (size_t i = start; i < end; ++i) {
@@ -614,7 +678,7 @@ inline Matrix Matrix::tan() const {
         }
         });
 
-    if (enable_checks_) result.check_nan_inf();
+    if (ENABLE_CHECKS) result.check_nan_inf();
     return result;
 }
 
@@ -626,10 +690,10 @@ inline void Matrix::fill(double value) {
 }
 
 inline Matrix Matrix::reshape(size_t new_rows, size_t new_cols) const {
-    if (enable_checks_ && new_rows * new_cols != data_.size()) {
+    if (ENABLE_CHECKS && new_rows * new_cols != data_.size()) {
         throw std::invalid_argument("New dimensions must match total size");
     }
-    return Matrix(new_rows, new_cols, data_, num_threads_, enable_checks_);
+    return Matrix(new_rows, new_cols, data_);
 }
 
 inline const std::vector<double>& Matrix::get_data() const { return data_; }
