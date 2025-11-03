@@ -132,13 +132,6 @@ public:
         report_test("Transpose values", t(0, 0) == 1 && t(2, 1) == 6);
     }
 
-    void test_trace() {
-        std::vector<double> data = { 1, 2, 3, 4 };
-        Matrix m(2, 2, data);
-        double tr = m.trace();
-        report_test("Trace", are_equal(tr, 5.0));
-    }
-
     void test_row_col_extraction() {
         std::vector<double> data = { 1, 2, 3, 4, 5, 6 };
         Matrix m(2, 3, data);
@@ -188,14 +181,23 @@ public:
 
         Matrix p = m.pow(2);
         report_test("Pow", are_equal(p(0, 0), 16.0) && are_equal(p(1, 1), 625.0));
+
         double M_PI = 3.14159265358979323846;
         std::vector<double> data2 = { 0, M_PI / 2, M_PI, 3 * M_PI / 2 };
+
         Matrix m2(2, 2, data2);
         Matrix s = m2.sin();
         report_test("Sin", are_equal(s(0, 0), 0.0) && are_equal(s(0, 1), 1.0));
 
         Matrix c = m2.cos();
         report_test("Cos", are_equal(c(0, 0), 1.0) && are_equal(c(0, 1), 0.0));
+
+        Matrix sr = m.sum_rowwise();
+        report_test("Rowwise-sum", are_equal(sr(0, 0), 20.0) && are_equal(sr(0, 1), 34.0));
+
+        Matrix sc = m.sum_colwise();
+        report_test("Colwise-sum", are_equal(sc(0, 0), 13.0) && are_equal(sc(0, 1), 41.0));
+
     }
 
     void test_utility_functions() {
@@ -213,6 +215,14 @@ public:
         Matrix m2(3, 4, data);
         Matrix reshaped = m2.reshape(4, 3);
         report_test("Reshape", reshaped.rows() == 4 && reshaped.cols() == 3);
+
+        Matrix randomized = reshaped.randomize();
+        randomized.randomize_inplace();
+        report_test("Randomize", randomized.rows() == 4 && randomized.cols() == 3);
+
+        Matrix m3(1, 4, { 1, 2, 3, 4 });
+        Matrix broadcasted = m3.broadcast_to(3, 4);
+        report_test("Broadcast", broadcasted.rows() == 3 && broadcasted.cols() == 4);
     }
 
     void test_in_place_ops() {
@@ -309,7 +319,6 @@ public:
         test_multiplication();
         test_element_wise_ops();
         test_transpose();
-        test_trace();
         test_row_col_extraction();
         test_sub_matrix_extraction();
         test_statistical_ops();

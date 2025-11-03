@@ -1,4 +1,4 @@
-#ifndef MATRIX_HPP
+﻿#ifndef MATRIX_HPP
 #define MATRIX_HPP
 
 #include <vector>
@@ -9,6 +9,7 @@
 #include <future>
 #include <numeric>
 #include <limits>
+#include <random>
 
 namespace MATRIX_CONFIGS {
     static bool ENABLE_CHECKS = false;
@@ -71,7 +72,6 @@ public:
     // Matrix operations
     Matrix transpose() const;
     Matrix transpose_parallel_blocked() const;
-    double trace() const;
     Matrix row(size_t idx) const;
     Matrix col(size_t idx) const;
     Matrix sub_matrix(size_t idx1, size_t idx2, size_t idy1, size_t idy2);
@@ -94,10 +94,15 @@ public:
     Matrix sin() const;
     Matrix cos() const;
     Matrix tan() const;
+    Matrix sum_rowwise() const;
+    Matrix sum_colwise() const;
 
     // Utility functions
     void fill(double value);
+    Matrix randomize(double min = 0.0, double max = 1.0);
+    void randomize_inplace(double min = 0.0, double max = 1.0);
     Matrix reshape(size_t new_rows, size_t new_cols) const;
+    Matrix broadcast_to(size_t target_rows, size_t target_cols) const;
     const std::vector<double>& get_data() const;
     std::vector<double>& get_data();
 };
@@ -106,9 +111,10 @@ public:
 
 // Private helper methods
 inline void Matrix::validate_dimensions(const Matrix& other) const {
-    if (ENABLE_CHECKS && (rows_ != other.rows_ || cols_ != other.cols_)) {
-        throw std::invalid_argument("Matrix dimensions must match");
-    }
+    if (!ENABLE_CHECKS) return;    
+    if (!(rows_ == other.rows_ && cols_ == other.cols_))
+        throw std::invalid_argument("Matrix dimensions not same");
+
 }
 
 inline void Matrix::validate_multiplication(const Matrix& other) const {
@@ -152,7 +158,7 @@ inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
 
 // Constructors
 inline Matrix::Matrix(size_t rows, size_t cols, double init_val)
-    : data_(rows* cols, init_val), rows_(rows), cols_(cols) {  }
+    : data_(rows* cols, init_val), rows_(rows), cols_(cols) { }
 
 inline Matrix::Matrix(size_t rows, size_t cols, const std::vector<double>& values)
     : data_(values), rows_(rows), cols_(cols) {
@@ -402,19 +408,6 @@ inline Matrix Matrix::transpose_parallel_blocked() const {
     }
 
     return result;
-}
-
-
-inline double Matrix::trace() const {
-    if (ENABLE_CHECKS && rows_ != cols_) {
-        throw std::invalid_argument("Trace requires square matrix");
-    }
-
-    double sum = 0.0;
-    for (size_t i = 0; i < rows_; ++i) {
-        sum += (*this)(i, i);
-    }
-    return sum;
 }
 
 inline Matrix Matrix::row(size_t idx) const {
@@ -682,10 +675,69 @@ inline Matrix Matrix::tan() const {
     return result;
 }
 
+inline Matrix Matrix::sum_rowwise() const {
+    // Sum along rows → result is 1 x cols
+    Matrix result(1, cols_);
+    parallel_for(0, cols_, [&](size_t start, size_t end) {
+        for (size_t j = start; j < end; ++j) {
+            for (size_t i = 0; i < rows_; ++i)
+                result(0, j) += (*this)(i, j);
+        }});
+    return result;
+}
+
+inline Matrix Matrix::sum_colwise() const {
+    // Sum along cols → result is rows x 1
+    Matrix result(rows_, 1);
+    parallel_for(0, rows_, [&](size_t start, size_t end) {
+        for (size_t i = start; i < end; ++i) {
+            for (size_t j = 0; j < cols_; ++j)
+                result(i, 0) += (*this)(i, j);
+        }});
+        return result;
+}
+
 // Utility functions
 inline void Matrix::fill(double value) {
     parallel_for(0, data_.size(), [&](size_t start, size_t end) {
         std::fill(data_.begin() + start, data_.begin() + end, value);
+        });
+}
+inline Matrix Matrix::randomize(double min, double max)
+{
+    if (ENABLE_CHECKS && min > max) {
+        throw std::invalid_argument("min value cannot be greater than max value");
+    }
+    Matrix result(rows_, cols_);
+    std::random_device rd;
+
+    parallel_for(0, result.data_.size(), [&](size_t start, size_t end) {
+        // Each thread gets its own generator to avoid data races
+        thread_local std::mt19937 thread_gen(rd() + std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        std::uniform_real_distribution<double> thread_dist(min, max);
+
+        for (size_t i = start; i < end; ++i) {
+            result.data_[i] = thread_dist(thread_gen);
+        }
+        });
+    
+    return result;
+}
+inline void Matrix::randomize_inplace(double min, double max)
+{
+    if (ENABLE_CHECKS && min > max) {
+        throw std::invalid_argument("min value cannot be greater than max value");
+    }
+
+    std::random_device rd;
+    parallel_for(0, data_.size(), [&](size_t start, size_t end) {
+        // Each thread gets its own generator to avoid data races
+        thread_local std::mt19937 thread_gen(rd() + std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        std::uniform_real_distribution<double> thread_dist(min, max);
+
+        for (size_t i = start; i < end; ++i) {
+            data_[i] = thread_dist(thread_gen);
+        }
         });
 }
 
@@ -695,6 +747,37 @@ inline Matrix Matrix::reshape(size_t new_rows, size_t new_cols) const {
     }
     return Matrix(new_rows, new_cols, data_);
 }
+
+inline Matrix Matrix::broadcast_to(size_t target_rows, size_t target_cols) const
+{
+    if (ENABLE_CHECKS) {
+        if (rows_ != target_rows && rows_ != 1)
+            throw std::invalid_argument("Cannot broadcast: incompatible row dimension");
+        if (cols_ != target_cols && cols_ != 1)
+            throw std::invalid_argument("Cannot broadcast: incompatible column dimension");
+    }
+    if (rows_ == target_rows && cols_ == target_cols)
+        return Matrix(*this);
+
+    Matrix result(target_rows, target_cols);
+    if (rows_ == 1) {
+        parallel_for(0, target_rows, [&](size_t start, size_t end) {
+            for (size_t i = start; i < end; ++i)
+                for (size_t j = 0; j < target_cols; ++j)
+                    result(i, j) = (*this)(0, j);
+            });
+    }
+    else if (cols_ == 1) {
+        parallel_for(0, target_rows, [&](size_t start, size_t end) {
+            for (size_t i = start; i < end; ++i)
+                for (size_t j = 0; j < target_cols; ++j)
+                    result(i, j) = (*this)(i, 0);
+            });
+    }
+
+    return result;
+}
+
 
 inline const std::vector<double>& Matrix::get_data() const { return data_; }
 inline std::vector<double>& Matrix::get_data() { return data_; }
