@@ -31,9 +31,6 @@ private:
     void validate_multiplication(const Matrix& other) const;
     void check_nan_inf() const;
 
-    template<typename Func>
-    void parallel_for(size_t start, size_t end, Func&& func) const;
-
 public:
     // Constructors
     Matrix();
@@ -106,6 +103,10 @@ public:
     Matrix broadcast_to(size_t target_rows, size_t target_cols) const;
     const std::vector<double>& get_data() const;
     std::vector<double>& get_data();
+
+    // Utility for multithreading
+    template<typename Func>
+    static void parallel_for(size_t start, size_t end, Func&& func);
 };
 
 // ==================== IMPLEMENTATIONS ====================
@@ -134,8 +135,7 @@ inline void Matrix::check_nan_inf() const {
 }
 
 template<typename Func>
-inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
-    // If multithreading is disabled or range is too small, execute serially
+static inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) {
     if (!ENABLE_MULTITHREADING || NUM_THREADS <= 1 || (end - start) <= MULTITHREADING_THRESHOLD) {
         func(start, end);
         return;
@@ -143,6 +143,7 @@ inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
 
     size_t chunk_size = (end - start + NUM_THREADS - 1) / NUM_THREADS;
     std::vector<std::future<void>> futures;
+    futures.reserve(NUM_THREADS);
 
     for (size_t i = 0; i < NUM_THREADS; ++i) {
         size_t chunk_start = start + i * chunk_size;
@@ -152,10 +153,10 @@ inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
         futures.push_back(std::async(std::launch::async, func, chunk_start, chunk_end));
     }
 
-    for (auto& f : futures) {
+    for (auto& f : futures)
         f.get();
-    }
 }
+
 
 inline Matrix::Matrix()
     : data_(1, 0.0), rows_(1), cols_(1) { }
