@@ -72,8 +72,8 @@ public:
     Matrix transpose_parallel_blocked() const;
     Matrix row(size_t idx) const;
     Matrix col(size_t idx) const;
-    Matrix sub_matrix(size_t idx1, size_t idx2, size_t idy1, size_t idy2);
-    Matrix sub_matrix(size_t idx2, size_t idy2);
+    Matrix sub_matrix(size_t row_start, size_t row_end, size_t col_start, size_t col_end) const;
+    Matrix sub_matrix(size_t row_end, size_t col_end) const;
 
     // Statistical operations
     double min() const;
@@ -434,28 +434,36 @@ inline Matrix Matrix::col(size_t idx) const {
     return Matrix(rows_, 1, col_data);
 }
 
-inline Matrix Matrix::sub_matrix(size_t idx1, size_t idx2, size_t idy1, size_t idy2)
-{
+inline Matrix Matrix::sub_matrix(size_t row_start, size_t row_end, size_t col_start, size_t col_end) const {
     if (ENABLE_CHECKS) {
-        if(idx1 < 0 || idx1 >= rows_ || idx2 < 0 || idx2 >= rows_)
+        if (row_start >= rows_ || row_end >= rows_ || row_start > row_end)
             throw std::out_of_range("Row indices out of range");
-        if (idy1 < 0 || idy1 >= cols_ || idy2 < 0 || idy2 >= cols_)
+        if (col_start >= cols_ || col_end >= cols_ || col_start > col_end)
             throw std::out_of_range("Column indices out of range");
     }
 
-    Matrix result(idx2 - idx1 + 1, idy2 - idy1 + 1);
-    for (size_t i = idx1; i <= idx2; ++i) {
-        for (size_t j = idy1; j <= idy2; ++j) {
-            result(i - idx1, j - idy1) = (*this)(i, j);
+    size_t new_rows = row_end - row_start + 1;
+    size_t new_cols = col_end - col_start + 1;
+    Matrix result(new_rows, new_cols);
+
+    auto& src = data_;
+    auto& dst = result.get_data();
+
+    parallel_for(0, new_rows, [&](size_t r_start, size_t r_end) {
+        for (size_t r = r_start; r < r_end; ++r) {
+            size_t src_offset = (r + row_start) * cols_ + col_start;
+            size_t dst_offset = r * new_cols;
+            std::copy(src.begin() + src_offset, src.begin() + src_offset + new_cols, dst.begin() + dst_offset);
         }
-    }
+        });
+
     return result;
 }
 
-inline Matrix Matrix::sub_matrix(size_t idx2, size_t idy2)
-{
-    return sub_matrix(0, idx2, 0, idy2);
+inline Matrix Matrix::sub_matrix(size_t row_end, size_t col_end) const {
+    return sub_matrix(0, row_end, 0, col_end);
 }
+
 
 // Statistical operations
 inline double Matrix::min() const {
