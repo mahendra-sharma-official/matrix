@@ -36,6 +36,7 @@ private:
 
 public:
     // Constructors
+    Matrix();
     Matrix(size_t rows, size_t cols, double init_val = 0.0);
     Matrix(size_t rows, size_t cols, const std::vector<double>& values);
 
@@ -155,6 +156,9 @@ inline void Matrix::parallel_for(size_t start, size_t end, Func&& func) const {
         f.get();
     }
 }
+
+inline Matrix::Matrix()
+    : data_(1, 0.0), rows_(1), cols_(1) { }
 
 // Constructors
 inline Matrix::Matrix(size_t rows, size_t cols, double init_val)
