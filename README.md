@@ -1,4 +1,5 @@
 # C++ matrix class with multithreading support 
+(This version uses a single global threadpool)
 
 # Features
 1. Multithreading can be used for matrix mathematical operations (needs to be enabled explicitly).
@@ -13,4 +14,3 @@
 
 # Extra
 Made this so that it will be easier to do the main project instead of writing matrix class again. 
-(Used AI to generate basically all code)
